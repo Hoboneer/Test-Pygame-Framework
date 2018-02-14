@@ -1,0 +1,14 @@
+{
+    "test_spaceship.png": {
+        "name": "TEST_SPACESHIP",
+        "colorkey": [255, 0, 128]
+    },
+    "test_background.png": {
+        "name": "TEST_BACKGROUND",
+        "colorkey": null
+    },
+    "test_icon.png": {
+        "name": "TEST_ICON",
+        "colorkey": [255, 0, 128]
+    }
+}
