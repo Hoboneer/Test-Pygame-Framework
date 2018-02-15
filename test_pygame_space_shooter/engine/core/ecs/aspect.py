@@ -1,4 +1,5 @@
 from typing import Iterable, FrozenSet, Set, Generator
+from itertools import chain
 
 from .types import ComponentName
 
@@ -25,6 +26,14 @@ class Aspect:
     def either_or(self) -> FrozenSet[ComponentName]:
         return self._xor_components
 
+    @property
+    def flat_either_or(self) -> FrozenSet[ComponentName]:
+        return frozenset(chain.from_iterable(self._xor_components))
+
+    @property
+    def all(self) -> FrozenSet[ComponentName]:
+        return self.mandatory | self.optional | self.flat_either_or
+
     def is_matched(self, component_names: Set[ComponentName]) -> bool:
         # There are no checks against optional components because it's not needed
         # it (the set of components) should only be required by the entity manager to retrieve entities that also have it
@@ -35,11 +44,11 @@ class Aspect:
             intersect = component_names & options
             yield len(intersect) == 1
 
-    def xor(self, component_names: Set[ComponentName]) -> Generator[Set[ComponentName], None, None]:
+    def xor(self, component_names: Set[ComponentName]) -> Generator[ComponentName, None, None]:
         for options in self._xor_components:
             intersect = component_names & options
             if len(intersect) == 1:
-                yield intersect
+                yield intersect.pop()  # The only element in `intersect` should be yielded
             else:
                 continue
 
