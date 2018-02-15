@@ -52,10 +52,24 @@ class EntityManager:
         self._component_classes[component_name] = component_cls
         self.components[component_name] = {}
 
+    @property
+    def registered_components(self) -> Set[ComponentName]:
+        return set(self._component_classes.keys())
+
+    @property
+    def live_entities(self) -> Set[EntityID]:
+        return set(self.entities.keys())
+
+    def _is_component_names_valid(self, component_names: Set[ComponentName]) -> bool:
+        try:
+            return component_names <= self.registered_components
+        except TypeError:
+            raise ValueError("Function `_is_component_names_valid` requires input to be a set. Got `{}` instead".format(component_names.__class__.__name__))
+
     def add_component_to_entity(self, entity_id: EntityID, component_name: ComponentName, new_component_info: NewComponentInfo) -> None:
-        if entity_id not in self.entities:
-            raise InvalidEntityIDError("Failed to add new component to entity because `entity_id` does not exist ({})".format(entity_id))
-        if component_name not in self._component_classes:
+        if entity_id not in self.live_entities:
+            raise InvalidEntityIDError("Failed to add component to entity because `entity_id` does not exist ({})".format(entity_id))
+        if component_name not in self.registered_components:
             raise InvalidComponentNameError("Failed to add component to entity because `component_name` is not an existing or registered component")
 
         try:
@@ -68,7 +82,7 @@ class EntityManager:
             self.components[component_name][entity_id] = component_cls(*args, **kwargs)
 
     def create_entity(self, components: Dict[ComponentName, Union[NewComponentInfo, ComponentObject]], instantiated: bool = False) -> EntityID:
-        if any(component_name not in self._component_classes for component_name in components.keys()):
+        if not self._is_component_names_valid(set(components.keys()))
             raise InvalidComponentNameError("Failed to add new entity to EntityManager because `components` has keys of non-existent components`")
 
         current_entity_id = self._next_entity_id
@@ -89,7 +103,7 @@ class EntityManager:
                 new_component_type = type(new_component_obj)
                 expected_type = self._component_classes[new_component_name]
                 if new_component_type != expected_type:
-                    raise InvalidComponentTypeError("Instantiated component type ({new_component_type}) does not match expected type ({expected_type})".format(**locals()))
+                    raise InvalidComponentTypeError("Instantiated component type ({new_component_type}) does not match expected type ({expected_type})".format_map(locals()))
                 else:
                     self.components[new_component_name][current_entity_id] = new_component_obj
 
@@ -143,7 +157,7 @@ class EntityManager:
         try:
             entity_component_names = self.entities[entity_id]
         except KeyError:
-            raise InvalidEntityIDError("Failed to get entity because `entity_id` has {} which does not exist".format(entity_id))
+            raise InvalidEntityIDError("Failed to get entity with ID '{}' because does not exist".format(entity_id))
         else:
             entity = {}  # type: Entity
             for component_name in entity_component_names:
@@ -152,7 +166,7 @@ class EntityManager:
             return entity
 
     def remove_entity(self, entity_id: EntityID, immediate: bool = True) -> None:
-        if entity_id not in self.entities:
+        if entity_id not in self.live_entities:
             raise InvalidEntityIDError("Could not remove entity with ID '{}' because it does not exist".format(entity_id))            
 
         if immediate:
