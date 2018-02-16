@@ -5,6 +5,9 @@ from typing import (
     cast
 )
 from mypy_extensions import TypedDict
+
+from contextlib import contextmanager
+
 from .events import EntityManagerEvent, RemoveEntity, EntityAdded
 from .types import (
     Entity, EntityID, EntityManagerEventID,
@@ -68,6 +71,15 @@ class EntityManager:
     def live_entities(self) -> Set[EntityID]:
         return set(self.entities.keys())
 
+    @contextmanager
+    def _new_entity_id(self) -> Iterator[EntityID]:
+        try:
+            yield self._next_entity_id
+        except Exception:
+            raise
+        else:
+            self._next_entity_id += 1
+
     def _is_component_names_valid(self, component_names: AbstractSet[ComponentName]) -> bool:
         try:
             return component_names <= self.registered_components
@@ -93,35 +105,33 @@ class EntityManager:
         if not self._is_component_names_valid(set(components.keys())):
             raise InvalidComponentNameError("Failed to add new entity to EntityManager because `components` has keys of non-existent components`")
 
-        current_entity_id = self._next_entity_id
-        if not instantiated:
-            new_components = cast(Dict[ComponentName, NewComponentInfo], components)
-            for component_name in new_components.keys():
-                try:
-                    args = new_components[component_name]["args"]
-                    kwargs = new_components[component_name]["kwargs"]
-                except KeyError:
-                    raise IncompleteNewComponentInfo("Failed to add component named '{component_name}' to entity because new component info does not have all the required keys: 'args' and 'kwargs'".format_map(locals()))
-                else:
-                    component_cls = self._component_classes[component_name]
-                    self.components[component_name][current_entity_id] = component_cls(*args, **kwargs)
+        with self._new_entity_id() as current_entity_id:
+            if not instantiated:
+                new_components = cast(Dict[ComponentName, NewComponentInfo], components)
+                for component_name in new_components.keys():
+                    try:
+                        args = new_components[component_name]["args"]
+                        kwargs = new_components[component_name]["kwargs"]
+                    except KeyError:
+                        raise IncompleteNewComponentInfo("Failed to add component named '{component_name}' to entity because new component info does not have all the required keys: 'args' and 'kwargs'".format_map(locals()))
+                    else:
+                        component_cls = self._component_classes[component_name]
+                        self.components[component_name][current_entity_id] = component_cls(*args, **kwargs)
 
-            self.entities[current_entity_id] = set(new_components.keys())
-            self._next_entity_id += 1
+                self.entities[current_entity_id] = set(new_components.keys())
 
-        else:
-            # Runtime type-checking
-            new_components = cast(Dict[ComponentName, ComponentObject], components)
-            for new_component_name, new_component_obj in new_components.items():
-                new_component_type = type(new_component_obj)
-                expected_type = self._component_classes[new_component_name]
-                if new_component_type != expected_type:
-                    raise InvalidComponentTypeError("Instantiated component type ({new_component_type}) does not match expected type ({expected_type})".format_map(locals()))
-                else:
-                    self.components[new_component_name][current_entity_id] = new_component_obj
+            else:
+                # Runtime type-checking
+                new_components = cast(Dict[ComponentName, ComponentObject], components)
+                for new_component_name, new_component_obj in new_components.items():
+                    new_component_type = type(new_component_obj)
+                    expected_type = self._component_classes[new_component_name]
+                    if new_component_type != expected_type:
+                        raise InvalidComponentTypeError("Instantiated component type ({new_component_type}) does not match expected type ({expected_type})".format_map(locals()))
+                    else:
+                        self.components[new_component_name][current_entity_id] = new_component_obj
 
-            self.entities[current_entity_id] = set(new_components.keys())
-            self._next_entity_id += 1
+                self.entities[current_entity_id] = set(new_components.keys())
 
         self.events.push(EntityAdded(info={"entity_id": current_entity_id}))
         return current_entity_id
