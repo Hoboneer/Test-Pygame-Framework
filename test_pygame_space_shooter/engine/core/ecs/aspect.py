@@ -1,4 +1,5 @@
-from typing import Iterable, FrozenSet, Set, Generator
+from typing import Iterable, FrozenSet, Set, Generator, TYPE_CHECKING
+from itertools import chain
 
 from .types import ComponentName
 
@@ -22,8 +23,16 @@ class Aspect:
         return self._optional_components
 
     @property
-    def either_or(self) -> FrozenSet[ComponentName]:
+    def either_or(self) -> FrozenSet[FrozenSet[ComponentName]]:
         return self._xor_components
+
+    @property
+    def flat_either_or(self) -> FrozenSet[ComponentName]:
+        return frozenset(chain.from_iterable(self._xor_components))
+
+    @property
+    def all(self) -> FrozenSet[ComponentName]:
+        return self.mandatory | self.optional | self.flat_either_or
 
     def is_matched(self, component_names: Set[ComponentName]) -> bool:
         # There are no checks against optional components because it's not needed
@@ -35,26 +44,34 @@ class Aspect:
             intersect = component_names & options
             yield len(intersect) == 1
 
-    def xor(self, component_names: Set[ComponentName]) -> Generator[Set[ComponentName], None, None]:
+    def xor(self, component_names: Set[ComponentName]) -> Generator[ComponentName, None, None]:
         for options in self._xor_components:
             intersect = component_names & options
             if len(intersect) == 1:
-                yield intersect
+                yield intersect.pop()  # The only element in `intersect` should be yielded
             else:
                 continue
 
     def __hash__(self) -> int:
         return hash(self._and_components | self._optional_components | self._xor_components)
 
-    def __eq__(self, other: "Aspect") -> bool:
-        try:
-            this_intersects = self._and_components | self._optional_components | self._xor_components 
-            other_intersects = other._and_components | other._optional_components | other._xor_components
+    def __eq__(self, other: object) -> bool:
+        # I'd really like to enable ducktyping here though... why, mypy
+        if isinstance(other, Aspect):
+            this_intersects = self.mandatory | self.optional | self.either_or 
+            other_intersects = other.mandatory | other.optional | other.either_or
             return this_intersects == other_intersects
-        except AttributeError:
-            raise TypeError(
-                "<class Aspect> does not support equality operation (==) with classes other than <class Aspect>."
-                "Got <class {}> instead.".format(other.__class__.__name__))
+        else:
+            # A dirty hack to trick mypy into thinking this method is OK and complies
+            # with the type signature-- even though `NotImplemented` should be OK here.
+            # Though it looks like they're dealing with it. Reference:
+            # https://github.com/python/mypy/issues/4534
+            if TYPE_CHECKING:
+                return False
+            else:
+                # This is returned at runtime
+                return NotImplemented
+            
 
     def __repr__(self) -> str:
         return "<class Aspect ({}|{}|{})>".format(len(self.mandatory), len(self.optional), len(self.either_or))
