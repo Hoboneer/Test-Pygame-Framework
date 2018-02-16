@@ -88,18 +88,23 @@ class EntityManager:
         current_entity_id = self._next_entity_id
         if not instantiated:
             new_components = cast(Dict[ComponentName, NewComponentInfo], components)
-            for component_name in components.keys():
-                args = new_components[component_name]["args"]
-                kwargs = new_components[component_name]["kwargs"]    
-                component_cls = self._component_classes[component_name]
-                self.components[component_name][current_entity_id] = component_cls(*args, **kwargs)
+            for component_name in new_components.keys():
+                try:
+                    args = new_components[component_name]["args"]
+                    kwargs = new_components[component_name]["kwargs"]
+                except KeyError:
+                    raise IncompleteNewComponentInfo("Failed to add component named '{component_name}' to entity because new component info does not have all the required keys: 'args' and 'kwargs'".format_map(locals()))
+                else:
+                    component_cls = self._component_classes[component_name]
+                    self.components[component_name][current_entity_id] = component_cls(*args, **kwargs)
 
-            self.entities[current_entity_id] = set(components.keys())
+            self.entities[current_entity_id] = set(new_components.keys())
             self._next_entity_id += 1
 
         else:
             # Runtime type-checking
-            for new_component_name, new_component_obj in components.items():
+            new_components = cast(Dict[ComponentName, ComponentObject], components)
+            for new_component_name, new_component_obj in new_components.items():
                 new_component_type = type(new_component_obj)
                 expected_type = self._component_classes[new_component_name]
                 if new_component_type != expected_type:
@@ -107,7 +112,7 @@ class EntityManager:
                 else:
                     self.components[new_component_name][current_entity_id] = new_component_obj
 
-            self.entities[current_entity_id] = set(components.keys())
+            self.entities[current_entity_id] = set(new_components.keys())
             self._next_entity_id += 1
 
         self.events.push(EntityAdded(info={"entity_id": current_entity_id}))
