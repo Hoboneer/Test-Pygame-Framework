@@ -1,4 +1,4 @@
-from typing import Iterable, FrozenSet, Set, Generator
+from typing import Iterable, FrozenSet, Set, Generator, TYPE_CHECKING
 from itertools import chain
 
 from .types import ComponentName
@@ -23,7 +23,7 @@ class Aspect:
         return self._optional_components
 
     @property
-    def either_or(self) -> FrozenSet[ComponentName]:
+    def either_or(self) -> FrozenSet[FrozenSet[ComponentName]]:
         return self._xor_components
 
     @property
@@ -55,15 +55,23 @@ class Aspect:
     def __hash__(self) -> int:
         return hash(self._and_components | self._optional_components | self._xor_components)
 
-    def __eq__(self, other: "Aspect") -> bool:
-        try:
-            this_intersects = self._and_components | self._optional_components | self._xor_components 
-            other_intersects = other._and_components | other._optional_components | other._xor_components
+    def __eq__(self, other: object) -> bool:
+        # I'd really like to enable ducktyping here though... why, mypy
+        if isinstance(other, Aspect):
+            this_intersects = self.mandatory | self.optional | self.either_or 
+            other_intersects = other.mandatory | other.optional | other.either_or
             return this_intersects == other_intersects
-        except AttributeError:
-            raise TypeError(
-                "<class Aspect> does not support equality operation (==) with classes other than <class Aspect>."
-                "Got <class {}> instead.".format(other.__class__.__name__))
+        else:
+            # A dirty hack to trick mypy into thinking this method is OK and complies
+            # with the type signature-- even though `NotImplemented` should be OK here.
+            # Though it looks like they're dealing with it. Reference:
+            # https://github.com/python/mypy/issues/4534
+            if TYPE_CHECKING:
+                return False
+            else:
+                # This is returned at runtime
+                return NotImplemented
+            
 
     def __repr__(self) -> str:
         return "<class Aspect ({}|{}|{})>".format(len(self.mandatory), len(self.optional), len(self.either_or))
