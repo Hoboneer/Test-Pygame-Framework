@@ -3,6 +3,7 @@ from mypy_extensions import TypedDict
 from .events import EntityManagerEvent, RemoveEntity, EntityAdded
 from .types import (Entity, EntityID, EntityManagerEventID,
                     ComponentName, ComponentObject, NewComponentInfo)
+from .aspect import Aspect
 
 
 class ECSError(Exception):
@@ -118,45 +119,59 @@ class EntityManager:
         self.events.push(EntityAdded(info={"entity_id": current_entity_id}))
         return current_entity_id
 
-    def get_matching_entities(self, with_components: Set[ComponentName]) -> Dict[EntityID, Entity]:
-        if any(component_name not in self._component_classes for component_name in with_components):
-            raise InvalidComponentNameError("Failed to get matching entities because `with_components` has keys of non-existent components")
+    def _group_entity_pattern_match(self, pattern: Aspect) -> Set[EntityID]:
+        filter_func = (lambda c, p: self._is_component_names_valid(c | p) and c >= p)
 
-        entities = {}  # type: Dict[EntityID, Entity]
+        matching_mandatory_entities = {entity_id for entity_id, component_names in self.entities.items() if filter_func(component_names, pattern.mandatory)}  # type: Set[EntityID]
+        matching_xor_entities = {entity_id for entity_id, component_names in self.entities.items() if all(pattern._xor(component_names))}  # type: Set[EntityID]
 
-        # Initialise `entities` with empty dicts for all entities that match `with_components`
-        entities_set = set(self.entities.keys())  # type: Set[EntityID]
-        components_set = {entity_id for component_name in self.components.keys() for entity_id in self.components[component_name]}  # type: Set[EntityID]
-        matching_entities = set.intersection(components_set, entities_set)  # type: Set[EntityID]
+        matching_entities = matching_mandatory_entities & matching_xor_entities
+        return matching_entities
+
+    def get_matching_entities(self, pattern: Aspect) -> Dict[EntityID, Entity]:
+        if not self._is_component_names_valid(pattern.all):
+            raise InvalidComponentNameError("Failed to get matching entities because `pattern` has keys of non-existent components")
+
+        entity_views = {}  # type: Dict[EntityID, Entity]
+
+        matching_entities = self._group_entity_pattern_match(pattern)
         for entity_id in matching_entities:
-            entities[entity_id] = {}
+            entity_views[entity_id] = get_matching_entity(entity_id, pattern, _checked=True)
+        entity_views = {entity for entity in for get_matching_entity}  # type: Dict[EntityID, Entity]
 
-        for component_name in with_components:
-            for entity_id, component_obj in self.components[component_name].items():
-                if entity_id in matching_entities:
-                    entities[entity_id][component_name] = component_obj
+        return entity_views
 
-        return entities
-
-    def get_matching_entity(self, entity_id: EntityID, with_components: Set[ComponentName]) -> Optional[Entity]:
+    def get_matching_entity(self, entity_id: EntityID, pattern: Aspect, _checked: bool = False) -> Optional[Entity]:
         # Used to get a *specific* entity's *specific* components
-        if any(component_name not in self._component_classes for component_name in with_components):
-            raise InvalidComponentNameError("Failed to get matching entity because `with_components` has keys of non-existent components")
+        if not _checked:
+            if not self._is_component_names_valid(pattern.all):
+                raise InvalidComponentNameError("Failed to get matching entity because `pattern` has keys of non-existent components")
 
-        try:
-            entity_component_names = self.entities[entity_id]
-        except KeyError:
-            raise InvalidEntityIDError("Failed to get matching entity entity because `entity_id` has {} which does not exist".format(entity_id))
+            try:
+                entity_component_names = self.entities[entity_id]  # type: Set[ComponentName]
+            except KeyError:
+                raise InvalidEntityIDError("Failed to get matching entity because `entity_id` is {}, which does not exist".format(entity_id))
+            else:
+                if pattern.is_matched(entity_component_names):
+                    # try replace this one below with 1 or 2 set operations (if too slow)
+                    # This does `s1 | s2` because we already know that it has the mandatory components, but any optionals are OK
+                    entity_view = {name:(self.components[name][entity_id]) for name in entity_component_names if name in pattern.mandatory | pattern.optional or name in pattern.xor()}  # type: Entity
+
+                    return entity_view
+                else:
+                    return None
         else:
-            matching_components = set.intersection(entity_component_names, with_components)
-            if matching_components != with_components:  # Entity does not match pattern
-                return None
+            # This branch should only be executed when called by `get_matching_entities`-- which lets it assume that the entity matches the pattern
+            try:
+                entity_component_names = self.entities[entity_id]  # type: Set[ComponentName]
+            except KeyError:
+                raise InvalidEntityIDError("Failed to get matching entity because `entity_id` is {}, which does not exist".format(entity_id))
+            else:
+                # try replace this one below with 1 or 2 set operations (if too slow)
+                # This does `s1 | s2` because we already know that it has the mandatory components, but any optionals are OK
+                entity_view = {name:(self.components[name][entity_id]) for name in entity_component_names if name in pattern.mandatory | pattern.optional or name in pattern.xor()}  # type: Entity
 
-            entity = {}  # type: Entity
-            for component_name in matching_components:
-                component_obj = self.components[component_name][entity_id]
-                entity[component_name] = component_obj
-            return entity
+                return entity_view
 
     def get_entity(self, entity_id: EntityID) -> Entity:
         try:
